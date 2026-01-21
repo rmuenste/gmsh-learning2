@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Test outputs (keep directory structure but ignore mesh files)
+tests/**/*.msh
+tests/**/*.vtk
+tests/**/*.vtu
+tests/**/*.tri
+tests/**/*.par
+tests/**/*.prj
+tests/**/*.png
+
+# Gmsh outputs
+*.msh~
+*.geo~
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
