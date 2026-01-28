@@ -10,19 +10,21 @@ cd "$SCRIPT_DIR"
 echo "=== Gmsh-Learning2 Workflow Setup ==="
 echo
 
-# Check if repos exist
+# Ensure repos exist (clone if missing)
 if [ ! -d "gmsh-learning" ]; then
-    echo "Error: gmsh-learning directory not found"
-    echo "Please clone or link the gmsh-learning repository"
-    exit 1
+    echo "gmsh-learning not found; cloning via SSH (fallback to HTTPS if SSH keys aren't set up)..."
+    git clone git@github.com:rmuenste/gmsh-learning.git gmsh-learning || \
+      git clone https://github.com/rmuenste/gmsh-learning2.git gmsh-learning
+    echo "✓ Cloned gmsh-learning"
 else
     echo "✓ Found gmsh-learning"
 fi
 
 if [ ! -d "pe_partpy" ]; then
-    echo "Error: pe_partpy directory not found"
-    echo "Please clone or link the pe_partpy repository"
-    exit 1
+    echo "pe_partpy not found; cloning via SSH (fallback to HTTPS if SSH keys aren't set up)..."
+    git clone git@github.com:rmuenste/pe_partpy.git pe_partpy || \
+      git clone https://github.com/rmuenste/pe_partpy.git pe_partpy
+    echo "✓ Cloned pe_partpy"
 else
     echo "✓ Found pe_partpy"
 fi

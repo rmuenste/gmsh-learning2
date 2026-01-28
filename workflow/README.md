@@ -25,6 +25,17 @@ python3 workflow/converters/msh_to_vtk.py tests/test_cylinder/mesh.msh
 paraview tests/test_cylinder/mesh.vtk
 ```
 
+## One-shot .geo → case folder
+
+```bash
+.venv/bin/python workflow/run_geo_to_case.py gmsh-learning/examples/pure_quad_omesh_helix_minimal_bl1.geo
+```
+
+Custom output folder:
+```bash
+.venv/bin/python workflow/run_geo_to_case.py gmsh-learning/examples/pure_quad_omesh_helix_minimal_bl1.geo --outdir gmsh-learning/output/my_case
+```
+
 ## Directory Structure
 
 ```

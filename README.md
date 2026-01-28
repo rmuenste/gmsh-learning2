@@ -15,6 +15,9 @@ This project integrates:
 # 1. Run setup check
 ./setup.sh
 
+# 1b. Verify CLI + venv deps (recommended)
+./workflow/check_env.sh
+
 # 2. Generate a mesh (example: structured box)
 cd workflow/generators
 gmsh simple_box.geo -3 -o ../../tests/test_cylinder/my_mesh.msh
@@ -29,6 +32,17 @@ python3 pe_partpy/gen_par_from_tri_regions.py tests/test_cylinder/my_mesh.tri
 python3 pe_partpy/tri2vtk_converter.py tests/test_cylinder/my_mesh_regions/file.prj \
     -proj tests/test_cylinder/my_mesh_regions
 paraview tests/test_cylinder/my_mesh_regions/main.vtu
+```
+
+## One-shot workflow (.geo → case folder)
+
+```bash
+.venv/bin/python workflow/run_geo_to_case.py gmsh-learning/examples/pure_quad_omesh_helix_minimal_bl1.geo
+```
+
+With explicit output folder:
+```bash
+.venv/bin/python workflow/run_geo_to_case.py gmsh-learning/examples/pure_quad_omesh_helix_minimal_bl1.geo --outdir gmsh-learning/output/my_case
 ```
 
 ## Project Structure
@@ -62,15 +76,19 @@ gmsh-learning2/
 
 ## Dependencies
 
-- **Gmsh 4.x**: Mesh generation ([gmsh.info](http://gmsh.info))
+- **Gmsh 4.x (CLI)**: Mesh generation ([gmsh.info](http://gmsh.info))
 - **Python 3.x**: Scripting
 - **NumPy**: Numerical operations
 - **ParaView** (optional): Visualization
 
-Install Python dependencies:
+Install Python dependencies (recommended: venv):
 ```bash
-pip3 install numpy
+python3 -m venv .venv
+.venv/bin/pip install -r gmsh-learning/requirements.txt
 ```
+
+Note: the Python `gmsh` package is optional and may not be available for all platforms.
+This workflow uses the system `gmsh` binary (e.g., `gmsh -version`).
 
 ## Features
 
