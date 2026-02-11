@@ -17,6 +17,7 @@ tests/**/*.png
 # Gmsh outputs
 *.msh~
 *.geo~
+workflow/generators/*.msh
 
 # IDE
 .vscode/
