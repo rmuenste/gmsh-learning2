@@ -36,6 +36,16 @@ Custom output folder:
 .venv/bin/python workflow/run_geo_to_case.py gmsh-learning/examples/pure_quad_omesh_helix_minimal_bl1.geo --outdir gmsh-learning/output/my_case
 ```
 
+Parameterized run with Gmsh `-setnumber` overrides:
+```bash
+.venv/bin/python workflow/run_geo_to_case.py \
+  gmsh-learning/examples/pure_quad_omesh_helix_minimal.geo \
+  --setnumber start_angle_deg=45 \
+  --setnumber end_angle_deg=90 \
+  --setnumber nAxial=25 \
+  --outdir gmsh-learning/output/atc_45deg_25layers_case
+```
+
 ## Directory Structure
 
 ```

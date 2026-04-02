@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 import argparse
-import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -23,6 +23,51 @@ def find_vtk_in_geo(geo_path: Path) -> Path | None:
     return vtk_path
 
 
+def rewrite_geo_save_path(geo_path: Path, vtk_path: Path) -> Path:
+    pattern = re.compile(r'^\s*Save\s+["\']([^"\']+\.vtk)["\']\s*;.*$', re.IGNORECASE)
+    new_lines = []
+    replaced = False
+    with geo_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            match = pattern.match(line)
+            if match:
+                indent = line[: len(line) - len(line.lstrip())]
+                new_lines.append(f'{indent}Save "{vtk_path}";\n')
+                replaced = True
+            else:
+                new_lines.append(line)
+    if not replaced:
+        raise ValueError(f'Could not find Save "...vtk" statement in {geo_path}')
+
+    temp_dir = Path(tempfile.mkdtemp(prefix="run_geo_to_case_"))
+    temp_geo = temp_dir / geo_path.name
+    temp_geo.write_text("".join(new_lines), encoding="utf-8")
+    return temp_geo
+
+
+def parse_setnumber(items: list[str]) -> list[tuple[str, str]]:
+    parsed: list[tuple[str, str]] = []
+    for item in items:
+        if "=" not in item:
+            raise ValueError(f"Invalid --setnumber value '{item}'. Expected name=value.")
+        name, value = item.split("=", 1)
+        name = name.strip()
+        value = value.strip()
+        if not name or not value:
+            raise ValueError(f"Invalid --setnumber value '{item}'. Expected name=value.")
+        parsed.append((name, value))
+    return parsed
+
+
+def build_override_suffix(pairs: list[tuple[str, str]]) -> str:
+    parts = []
+    for name, value in pairs:
+        safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", name)
+        safe_value = re.sub(r"[^A-Za-z0-9_.-]+", "_", value)
+        parts.append(f"{safe_name}-{safe_value}")
+    return "__".join(parts)
+
+
 def run(cmd: list[str]) -> None:
     print("+", " ".join(cmd))
     subprocess.run(cmd, check=True)
@@ -35,6 +80,12 @@ def main() -> int:
     parser.add_argument("--vtk", default="", help="Override expected VTK output path")
     parser.add_argument("--outdir", default="", help="Output case folder path")
     parser.add_argument("--gmsh-args", default="", help="Extra args passed to gmsh (quoted string)")
+    parser.add_argument(
+        "--setnumber",
+        action="append",
+        default=[],
+        help="Pass Gmsh ONELAB overrides as name=value; may be specified multiple times",
+    )
     args = parser.parse_args()
 
     geo_path = Path(args.geo).resolve()
@@ -42,18 +93,37 @@ def main() -> int:
         print(f"Error: .geo not found: {geo_path}", file=sys.stderr)
         return 1
 
+    try:
+        setnumber_pairs = parse_setnumber(args.setnumber)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    vtk_path = Path(args.vtk).resolve() if args.vtk else find_vtk_in_geo(geo_path)
+    if vtk_path is None:
+        print('Error: could not find a Save "...vtk" statement in the .geo.', file=sys.stderr)
+        print("Provide --vtk /path/to/output.vtk or add Save \"...vtk\"; to the .geo.", file=sys.stderr)
+        return 1
+
+    run_geo_path = geo_path
+    if setnumber_pairs and not args.vtk:
+        suffix = build_override_suffix(setnumber_pairs)
+        vtk_path = vtk_path.with_name(f"{vtk_path.stem}__{suffix}{vtk_path.suffix}")
+        try:
+            run_geo_path = rewrite_geo_save_path(geo_path, vtk_path)
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+
     # 1) Run gmsh on the .geo
-    gmsh_cmd = [args.gmsh, str(geo_path), "-3"]
+    gmsh_cmd = [args.gmsh, str(run_geo_path), "-3"]
     if args.gmsh_args:
         gmsh_cmd.extend(args.gmsh_args.split())
+    for name, value in setnumber_pairs:
+        gmsh_cmd.extend(["-setnumber", name, value])
     run(gmsh_cmd)
 
     # 2) Resolve VTK output
-    vtk_path = Path(args.vtk).resolve() if args.vtk else find_vtk_in_geo(geo_path)
-    if vtk_path is None:
-        print("Error: could not find a Save \"...vtk\" statement in the .geo.", file=sys.stderr)
-        print("Provide --vtk /path/to/output.vtk or add Save \"...vtk\"; to the .geo.", file=sys.stderr)
-        return 1
     if not vtk_path.exists():
         print(f"Error: expected VTK not found: {vtk_path}", file=sys.stderr)
         return 1
