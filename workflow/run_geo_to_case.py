@@ -68,6 +68,25 @@ def build_override_suffix(pairs: list[tuple[str, str]]) -> str:
     return "__".join(parts)
 
 
+def parse_numeric_assignments(geo_path: Path, names: list[str]) -> dict[str, float]:
+    values: dict[str, float] = {}
+    patterns = {
+        name: re.compile(
+            rf"{re.escape(name)}\s*=\s*\{{\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))\b|"
+            rf"^\s*{re.escape(name)}\s*=\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s*;"
+        )
+        for name in names
+    }
+    with geo_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            for name, pattern in patterns.items():
+                match = pattern.search(line)
+                if match:
+                    numeric = match.group(1) or match.group(2)
+                    values[name] = float(numeric)
+    return values
+
+
 def run(cmd: list[str]) -> None:
     print("+", " ".join(cmd))
     subprocess.run(cmd, check=True)
@@ -86,6 +105,41 @@ def main() -> int:
         default=[],
         help="Pass Gmsh ONELAB overrides as name=value; may be specified multiple times",
     )
+    parser.add_argument(
+        "--fit-atc-spheres",
+        action="store_true",
+        help="Fit fixed-radius spheres to the two open ATC helix ends and annotate matching .par files",
+    )
+    parser.add_argument(
+        "--sphere-radius",
+        type=float,
+        default=10.0,
+        help="Sphere radius used with --fit-atc-spheres (default: 10.0)",
+    )
+    parser.add_argument(
+        "--sphere-free-dx-max",
+        type=float,
+        default=0.0,
+        help="Second-pass x refinement half-width for ATC sphere fitting (default: 0.0, disabled)",
+    )
+    parser.add_argument(
+        "--sphere-free-dy-max",
+        type=float,
+        default=0.0,
+        help="Second-pass y refinement half-width for ATC sphere fitting (default: 0.0, disabled)",
+    )
+    parser.add_argument(
+        "--sphere-free-dz-max",
+        type=float,
+        default=0.0,
+        help="Second-pass z refinement half-width for ATC sphere fitting (default: 0.0, disabled)",
+    )
+    parser.add_argument(
+        "--sphere-free-iters",
+        type=int,
+        default=2,
+        help="Coordinate-descent cycles for second-pass ATC sphere refinement (default: 2)",
+    )
     args = parser.parse_args()
 
     geo_path = Path(args.geo).resolve()
@@ -98,6 +152,7 @@ def main() -> int:
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
+    setnumber_map = {name: value for name, value in setnumber_pairs}
 
     vtk_path = Path(args.vtk).resolve() if args.vtk else find_vtk_in_geo(geo_path)
     if vtk_path is None:
@@ -139,6 +194,46 @@ def main() -> int:
         case_dir = Path(args.outdir).resolve()
         gen_par_cmd.extend(["--outdir", str(case_dir)])
     run(gen_par_cmd)
+
+    if args.fit_atc_spheres:
+        helix_params = parse_numeric_assignments(geo_path, ["R", "Pturn", "start_angle_deg", "end_angle_deg"])
+        for name in list(helix_params):
+            if name in setnumber_map:
+                helix_params[name] = float(setnumber_map[name])
+        missing = [name for name in ["R", "Pturn", "start_angle_deg", "end_angle_deg"] if name not in helix_params]
+        if missing:
+            print(
+                f"Error: missing helix parameters for sphere fitting: {', '.join(missing)}",
+                file=sys.stderr,
+            )
+            return 1
+        run(
+            [
+                sys.executable,
+                "workflow/parameterize_atc_sphere_caps.py",
+                str(tri_path),
+                "--case-dir",
+                str(case_dir),
+                "--R",
+                str(helix_params["R"]),
+                "--Pturn",
+                str(helix_params["Pturn"]),
+                "--start-angle-deg",
+                str(helix_params["start_angle_deg"]),
+                "--end-angle-deg",
+                str(helix_params["end_angle_deg"]),
+                "--sphere-radius",
+                str(args.sphere_radius),
+                "--free-dx-max",
+                str(args.sphere_free_dx_max),
+                "--free-dy-max",
+                str(args.sphere_free_dy_max),
+                "--free-dz-max",
+                str(args.sphere_free_dz_max),
+                "--free-iters",
+                str(args.sphere_free_iters),
+            ]
+        )
 
     # 5) case folder -> VTU for visualization
     if case_dir is None:

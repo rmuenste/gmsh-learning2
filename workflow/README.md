@@ -46,6 +46,24 @@ Parameterized run with Gmsh `-setnumber` overrides:
   --outdir gmsh-learning/output/atc_45deg_25layers_case
 ```
 
+Parameterized ATC run with fitted spherical cap metadata for CFD:
+```bash
+.venv/bin/python workflow/run_geo_to_case.py \
+  gmsh-learning/examples/pure_quad_omesh_helix_minimal.geo \
+  --setnumber start_angle_deg=45 \
+  --setnumber end_angle_deg=90 \
+  --setnumber nAxial=25 \
+  --fit-atc-spheres \
+  --sphere-radius 10.0 \
+  --sphere-free-dx-max 1.0 \
+  --sphere-free-dy-max 1.0 \
+  --sphere-free-dz-max 1.0 \
+  --sphere-free-iters 4 \
+  --outdir gmsh-learning/output/atc_45deg_25layers_case
+```
+This updates the second line of the two endpoint `region_####.par` files to `-3 <region_id>`
+and writes `sphere_regions.json` with the fitted sphere centers, residual metrics, and fit settings.
+
 ## Directory Structure
 
 ```
