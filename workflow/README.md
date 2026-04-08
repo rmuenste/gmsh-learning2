@@ -58,11 +58,35 @@ Parameterized ATC run with fitted spherical cap metadata for CFD:
   --sphere-free-dx-max 1.0 \
   --sphere-free-dy-max 1.0 \
   --sphere-free-dz-max 1.0 \
-  --sphere-free-iters 4 \
+  --sphere-free-iters 32 \
   --outdir gmsh-learning/output/atc_45deg_25layers_case
 ```
 This updates the second line of the two endpoint `region_####.par` files to `-3 <region_id>`
 and writes `sphere_regions.json` with the fitted sphere centers, residual metrics, and fit settings.
+
+### ATC sphere-fit behavior
+
+The ATC workflow fits a fixed-radius sphere to the ring of nodes on each open helix end.
+The first pass constrains the sphere center to the helix centerline. An optional second pass
+then refines the center with free `dx/dy/dz` coordinate descent, controlled by:
+
+- `--sphere-free-dx-max`
+- `--sphere-free-dy-max`
+- `--sphere-free-dz-max`
+- `--sphere-free-iters`
+
+For ATC end caps there are generally two geometric sphere branches that can match the same ring:
+one that curves outward from the tube opening and one that curves inward into the helix. The workflow
+now rejects the inward branch by comparing the fitted center against the boundary region normal and,
+if necessary, reflecting the center across the cap plane onto the outward-curving side.
+
+The resulting `sphere_regions.json` records:
+
+- `center`: final sphere center used for the cap
+- `rmse`, `residual_min`, `residual_max`: residual metrics for that final center
+- `free_refined`: whether the free `dx/dy/dz` refinement ran
+- `side_dot`: signed distance direction check against the cap normal
+- `center_adjusted_for_outward_cap`: whether the center was moved to the outward branch
 
 ## Directory Structure
 

@@ -116,6 +116,54 @@ def _write_points_csv(path: Path, node_ids: list[int], nodes: list[np.ndarray]) 
             writer.writerow([node_id + 1, float(p[0]), float(p[1]), float(p[2])])
 
 
+def _ring_centroid_and_normal(ring_node_ids: list[int], nodes: list[np.ndarray], avg_normal: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    ring_pts = np.stack([nodes[node_id] for node_id in ring_node_ids], axis=0)
+    normal = np.array(avg_normal, dtype=float)
+    norm = np.linalg.norm(normal)
+    if norm == 0.0:
+        raise RuntimeError("Region average normal is zero; cannot determine cap orientation")
+    return ring_pts.mean(axis=0), normal / norm
+
+
+def _compute_residual_metrics(points: np.ndarray, center: np.ndarray, radius: float) -> tuple[float, float, float]:
+    d = np.linalg.norm(points - center[None, :], axis=1)
+    res = d - radius
+    rmse = math.sqrt(float(np.mean(res * res)))
+    return rmse, float(res.min()), float(res.max())
+
+
+def _enforce_outward_cap_center(
+    fit_result: dict,
+    ring_node_ids: list[int],
+    nodes: list[np.ndarray],
+    avg_normal: np.ndarray,
+    radius: float,
+) -> dict:
+    ring_centroid, ring_normal = _ring_centroid_and_normal(ring_node_ids, nodes, avg_normal)
+    center = np.array(fit_result["center"], dtype=float)
+    side_dot = float(np.dot(center - ring_centroid, ring_normal))
+
+    # A ring fit has two symmetric sphere branches across the cap plane. Keep the branch
+    # that bulges outward from the helix opening instead of curving back into the helix.
+    if side_dot <= 0.0:
+        fit_result["side_dot"] = side_dot
+        fit_result["center_adjusted_for_outward_cap"] = False
+        return fit_result
+
+    reflected_center = center - 2.0 * side_dot * ring_normal
+    ring_pts = np.stack([nodes[node_id] for node_id in ring_node_ids], axis=0)
+    rmse, residual_min, residual_max = _compute_residual_metrics(ring_pts, reflected_center, radius)
+
+    fit_result = dict(fit_result)
+    fit_result["center"] = reflected_center.tolist()
+    fit_result["rmse"] = rmse
+    fit_result["residual_min"] = residual_min
+    fit_result["residual_max"] = residual_max
+    fit_result["side_dot"] = float(np.dot(reflected_center - ring_centroid, ring_normal))
+    fit_result["center_adjusted_for_outward_cap"] = True
+    return fit_result
+
+
 def _parse_fit_output(output: str) -> dict:
     theta_match = re.search(r"theta_min \(deg\)\s*=\s*([^\n]+)", output)
     center_match = re.search(r"Center C\s*=\s*\[([^\]]+)\]", output)
@@ -299,6 +347,13 @@ def main() -> int:
                 free_dz_max=args.free_dz_max,
                 free_iters=args.free_iters,
             )
+            fit_result = _enforce_outward_cap_center(
+                fit_result=fit_result,
+                ring_node_ids=ring_node_ids,
+                nodes=mesh.nodes,
+                avg_normal=stats[region_idx]["avg_normal"],
+                radius=args.sphere_radius,
+            )
 
             region_id = region_idx
             par_name = f"region_{region_idx + 1:04d}.par"
@@ -319,6 +374,8 @@ def main() -> int:
                     "residual_min": fit_result["residual_min"],
                     "residual_max": fit_result["residual_max"],
                     "free_refined": fit_result["free_refined"],
+                    "side_dot": fit_result["side_dot"],
+                    "center_adjusted_for_outward_cap": fit_result["center_adjusted_for_outward_cap"],
                     "ring_node_count": len(ring_node_ids),
                 }
             )
