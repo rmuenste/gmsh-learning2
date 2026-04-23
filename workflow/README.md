@@ -132,6 +132,84 @@ Use PyPartitioner.py for parallel CFD:
 python pe_partpy/PyPartitioner.py <NPart> <Method> <NSubPart> <Name> <Project.prj>
 ```
 
+### ParaView VTU From A Case Folder
+
+If a case folder already contains `file.prj`, a `.tri` mesh, and `.par` boundary files, generate a ParaView-ready `.vtu` with:
+
+```bash
+python3 pe_partpy/tri2vtk_converter.py <case_dir>/file.prj -proj <case_dir>
+```
+
+Example:
+
+```bash
+python3 pe_partpy/tri2vtk_converter.py pe_partpy/3D_FAC_FBM/file.prj -proj pe_partpy/3D_FAC_FBM
+```
+
+This writes `main.vtu` into the case folder.
+
+### Partition A Case And Generate VTU
+
+If a case folder already exists and you want to partition it and immediately generate a ParaView file for inspection, use:
+
+```bash
+python3 workflow/run_partition_to_vtu.py <case_dir>/file.prj <n_part> <strategy> <subdivision_spec> [--mesh-name NAME]
+```
+
+Example:
+
+```bash
+python3 workflow/run_partition_to_vtu.py pe_partpy/3D_FAC_FBM/file.prj 4 axis_cuts 'x@[0.58333333,1.05,1.7]-y[]-z[]' --mesh-name 3D_FAC_FBM_axis_cuts
+```
+
+This runs `PyPartitioner.py`, writes the partitioned case into `_mesh/<mesh-name>/`, and then creates:
+
+```bash
+_mesh/<mesh-name>/main.vtu
+```
+
+It also writes one `.vtu` per subpartition, for example:
+
+```bash
+_mesh/<mesh-name>/sub0001/GRID0001.vtu
+_mesh/<mesh-name>/sub0002/GRID0001.vtu
+```
+
+and a ParaView collection file:
+
+```bash
+_mesh/<mesh-name>/subdomains.pvd
+```
+
+Use `--skip-subdomain-vtu` if you only want the combined `main.vtu`.
+
+### Which Converter To Use
+
+Use `workflow/converters/msh_to_vtk.py` when the starting point is a raw Gmsh `.msh` file:
+
+```bash
+python3 workflow/converters/msh_to_vtk.py input.msh [output_basename]
+```
+
+This writes:
+
+```bash
+output_basename.vtk
+output_basename.tri
+```
+
+Use `pe_partpy/tri2vtk_converter.py` when the starting point is already a mesh case folder with `file.prj`, `.tri`, and `.par` files:
+
+```bash
+python3 pe_partpy/tri2vtk_converter.py <case_dir>/file.prj -proj <case_dir>
+```
+
+This writes:
+
+```bash
+<case_dir>/main.vtu
+```
+
 ## File Formats
 
 ### MSH 4.2 (Input)
