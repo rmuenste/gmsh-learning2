@@ -15,31 +15,34 @@ The parent repository provides integration scripts, format converters, and a uni
 
 ```
 gmsh-learning2/                    # Parent integration repo (this level)
-├── README.md                      # Comprehensive workflow documentation
+├── README.md                      # Workflow documentation (user-facing)
 ├── CLAUDE.md                      # This file - integration guidance
-├── MODIFICATIONS.md               # Changes made to subrepos
-├── setup.sh                       # Environment setup checker
+├── setup.sh                       # Clones/updates the two subrepos, checks environment
 ├── .gitignore                     # Git ignore patterns
 │
-├── workflow/                      # Unified workflow scripts (NEW)
+├── workflow/                      # Unified workflow scripts
 │   ├── README.md                 # Detailed workflow documentation
+│   ├── check_env.sh              # Environment check (gmsh, venv, Python deps)
+│   ├── run_geo_to_case.py        # Automated .geo → VTK → TRI → case folder pipeline
+│   ├── run_partition_to_vtu.py   # PyPartitioner run + VTU generation for ParaView
+│   ├── parameterize_atc_sphere_caps.py  # Fit spheres to ATC helix end caps, annotate .par files
 │   ├── generators/               # Gmsh .geo mesh generation scripts
-│   │   ├── simple_box.geo       # Structured hex box (working)
+│   │   ├── simple_box.geo       # Structured hex box
+│   │   ├── box_hex.geo          # Hex box variant
 │   │   ├── cylinder_structured.geo  # O-grid cylinder
-│   │   └── ...                   # Other geometry templates
+│   │   ├── cylinder_hex.geo     # Hex cylinder
+│   │   └── glowinski_column.geo # Glowinski column geometry
 │   └── converters/               # Format conversion utilities
 │       └── msh_to_vtk.py         # MSH 4.x → VTK + TRI converter
 │
-├── tests/                         # Test cases and outputs
-│   └── test_cylinder/            # Example test data
-│
-├── patches/                       # Patch files for subrepo modifications
+├── _mesh/                         # Partitioning output (created at runtime, gitignored)
 │
 ├── gmsh-learning/                 # Subrepo: Helical mesh generation
 │   ├── CLAUDE.md                 # Gmsh-specific guidance
-│   ├── examples/                 # Working .geo scripts
-│   │   ├── pure_quad_omesh_helix_minimal.geo  # Baseline working
-│   │   └── ...
+│   ├── examples/
+│   │   ├── pure_quad_omesh_helix_minimal.geo      # Baseline working (saves VTK)
+│   │   ├── pure_quad_omesh_helix_minimal_bl1.geo  # With boundary layer (saves VTK)
+│   │   └── pure_quad_omesh_helix_with_caps.geo    # With end caps
 │   └── ...                       # See gmsh-learning/CLAUDE.md
 │
 └── pe_partpy/                     # Subrepo: Mesh partitioning
@@ -47,98 +50,131 @@ gmsh-learning2/                    # Parent integration repo (this level)
     ├── PyPartitioner.py          # Main partitioning entry point
     ├── mesh/                     # Mesh data structures
     │   ├── mesh.py              # Quad/Hex mesh classes
-    │   └── mesh_io.py           # I/O operations (MODIFIED)
-    ├── partitioner/              # Partitioning algorithms
-    │   └── part.py              # METIS integration
-    ├── gen_par_from_tri.py      # Axis-aligned boundary detection
-    ├── gen_par_from_tri_by_normals.py  # Normal-based detection
-    ├── gen_par_from_tri_regions.py     # Region-growing (NEW)
-    ├── tri2vtk_converter.py     # Visualization converter
+    │   └── mesh_io.py           # I/O operations (includes MSH 4.x readers)
+    ├── partitioner/              # Partitioning algorithms (METIS via libmetis.so)
+    ├── gen_par_from_tri.py      # Axis-aligned boundary detection (boxes)
+    ├── gen_par_from_tri_by_normals.py  # Normal-clustering boundary detection (default in pipeline)
+    ├── gen_par_from_tri_regions.py     # Region-growing boundary detection
+    ├── tri2vtk_converter.py     # VTK ↔ TRI conversion + VTU visualization
     └── ...                       # See pe_partpy/CLAUDE.md
 ```
 
-## Complete Workflow Pipeline
+## Workflow Pipelines
 
-### Step-by-Step Process
+There are two ways to go from geometry to a CFD-ready case: the automated runner scripts (preferred) and the manual step-by-step path.
+
+### A. Automated pipeline (preferred)
+
+**Step 1: `.geo` → case folder** with `workflow/run_geo_to_case.py`:
+
+```bash
+python3 workflow/run_geo_to_case.py gmsh-learning/examples/pure_quad_omesh_helix_minimal.geo --outdir cases/helix
+```
+
+Pipeline stages: run gmsh (`-3`) → locate the VTK output → convert VTK → TRI (via `tri2vtk_converter.py`) → generate boundary `.par` files + `file.prj` (via `gen_par_from_tri_by_normals.py`).
+
+Requirements and options:
+- The `.geo` file must contain a `Save "...vtk";` statement (the helix examples do; override the expected path with `--vtk`). The `workflow/generators/*.geo` scripts save MSH instead — use the manual pipeline (B) for those.
+- `--setnumber name=value` (repeatable) passes ONELAB parameter overrides to gmsh; the VTK/case output gets a derived suffix so parameterized runs don't collide.
+- `--gmsh` / `--gmsh-args` override the gmsh executable and extra CLI args.
+- `--fit-atc-spheres` fits fixed-radius spheres to the two open ATC helix ends and annotates the matching `.par` files (needs `R`, `Pturn`, `start_angle_deg`, `end_angle_deg` in the `.geo` or via `--setnumber`). Related knobs: `--sphere-radius` (default 10.0), `--sphere-free-{dx,dy,dz}-max`, `--sphere-free-iters`. The underlying tool is `workflow/parameterize_atc_sphere_caps.py`, which can also be run standalone.
+
+**Step 2: partition + visualize** with `workflow/run_partition_to_vtu.py`:
+
+```bash
+python3 workflow/run_partition_to_vtu.py cases/helix/file.prj 27 axis_uniform x3-y3-z3
+```
+
+Runs `PyPartitioner.py`, writes output under `_mesh/<mesh-name>/`, and generates `main.vtu` (plus per-subpartition VTUs unless `--skip-subdomain-vtu`) for ParaView. `--mesh-name` overrides the derived output name; `--format` is passed through to PyPartitioner (default `v2`).
+
+### B. Manual step-by-step pipeline
 
 ```
-1. Mesh Generation (Gmsh)
+1. Mesh generation (Gmsh, MSH 4.2 output)
    ↓
-2. Format Conversion (MSH 4.x → VTK + TRI)
+2. Format conversion (MSH 4.x → VTK + TRI)
    ↓
-3. Boundary Parametrization (.par files)
+3. Boundary parametrization (.par files + file.prj)
    ↓
-4. [Optional] Mesh Partitioning (METIS)
+4. [Optional] Mesh partitioning (METIS)
    ↓
-5. Visualization/CFD Solver Input
+5. Visualization / CFD solver input
 ```
 
-### Detailed Commands
-
-#### 1. Generate Mesh (Gmsh)
-
-**Simple box geometry:**
-```bash
-cd workflow/generators
-gmsh simple_box.geo -3 -o ../../tests/my_box/mesh.msh
-```
-
-**O-grid cylinder:**
-```bash
-cd workflow/generators
-gmsh cylinder_structured.geo -3 -o ../../tests/my_cylinder/mesh.msh
-```
-
-**Helical tube (ATC):**
-```bash
-cd gmsh-learning/examples
-gmsh pure_quad_omesh_helix_minimal.geo -3 -o ../../tests/helix/mesh.msh
-```
-
-#### 2. Convert to VTK + TRI Format
+#### 1. Generate mesh (Gmsh)
 
 ```bash
-python3 workflow/converters/msh_to_vtk.py tests/my_mesh/mesh.msh
+gmsh workflow/generators/simple_box.geo -3 -o out/box/mesh.msh
+gmsh workflow/generators/cylinder_structured.geo -3 -o out/cyl/mesh.msh
 ```
 
-**Output:**
-- `mesh.vtk` - ParaView visualization
-- `mesh.tri` - CFD solver format (DCORVG/KVERT)
+#### 2. Convert to VTK + TRI
 
-#### 3. Generate Boundary Parametrization
-
-**Method A: Axis-aligned (for boxes):**
 ```bash
-python3 pe_partpy/gen_par_from_tri.py tests/my_mesh/mesh.tri --outdir tests/my_mesh/mesh_regions
+python3 workflow/converters/msh_to_vtk.py out/box/mesh.msh [output_basename]
 ```
 
-**Method B: Region-growing (for any geometry):**
+Output: `mesh.vtk` (ParaView) and `mesh.tri` (CFD solver format).
+
+Note: `pe_partpy/tri2vtk_converter.py` also converts VTK → TRI directly (`tri2vtk_converter.py input.vtk output.tri`) — that is what the automated pipeline uses.
+
+#### 3. Generate boundary parametrization
+
+Three methods, all writing `region_*.par` + `file.prj` + a copy of the `.tri` into `--outdir`:
+
 ```bash
-python3 pe_partpy/gen_par_from_tri_regions.py tests/my_mesh/mesh.tri --outdir tests/my_mesh/mesh_regions --angle 45.0
-```
+# Axis-aligned (boxes; also has --tol)
+python3 pe_partpy/gen_par_from_tri.py out/box/mesh.tri --outdir out/box/regions
 
-**Output:**
-- `mesh_regions/mesh.tri` - Copy of mesh file
-- `mesh_regions/region_0.par` - Boundary parametrizations
-- `mesh_regions/file.prj` - Project file listing all components
+# Normal clustering (general geometries; used by the automated pipeline)
+python3 pe_partpy/gen_par_from_tri_by_normals.py out/cyl/mesh.tri --outdir out/cyl/regions --delta 30.0
+#   also: --btype Wall, --parameter "''", --min-faces N (merge small regions)
+
+# Region-growing (curved surfaces)
+python3 pe_partpy/gen_par_from_tri_regions.py out/cyl/mesh.tri --outdir out/cyl/regions --angle 45.0
+```
 
 #### 4. Visualize
 
 ```bash
-python3 pe_partpy/tri2vtk_converter.py tests/my_mesh/mesh_regions/file.prj -proj tests/my_mesh/mesh_regions
-paraview tests/my_mesh/mesh_regions/main.vtu
+python3 pe_partpy/tri2vtk_converter.py out/cyl/regions/file.prj -proj out/cyl/regions
+paraview out/cyl/regions/main.vtu
 ```
 
-#### 5. Partition (Optional - for parallel CFD)
+#### 5. Partition (optional, for parallel CFD)
 
 ```bash
 cd pe_partpy
-python3 PyPartitioner.py <NPart> <Method> <NSubPart> <Name> ../tests/my_mesh/mesh_regions/file.prj
+python3 PyPartitioner.py <NPart> <Strategy> <SubdivisionSpec> <Name> <project.prj> [-f/--format v2]
 ```
 
-**Example:**
+Output goes to `_mesh/` (created next to the working directory).
+
+## PyPartitioner Strategies
+
+Strategies are passed **by name**; legacy numeric codes are still accepted:
+
+| Strategy | Legacy code | Notes |
+|---|---|---|
+| `metis_recursive` | 1 | METIS recursive bisection |
+| `metis_vkway` | 2 | METIS VKway |
+| `metis_kway` | 3 | METIS Kway |
+| `metis_recursive_reversed` | 11 | |
+| `metis_vkway_reversed` | 12 | |
+| `metis_kway_reversed` | 13 | |
+| `axis_uniform` | -4 | Uniform axis-aligned slabs |
+| `axis_cuts` | — | Explicit cut positions |
+| `plane_single` | -5 | |
+| `plane_dual` | -6 | |
+| `plane_ring` | -7 | Ring-based partitioning |
+
+The subdivision spec is a string, e.g. `x3-y3-z3` (uniform 3×3×3), `x[0.2,0.5]-y[]-z[]` (explicit cuts), or a plain integer for METIS sub-partitioning.
+
+Examples:
 ```bash
-python3 PyPartitioner.py 8 1 1 PART ../tests/my_mesh/mesh_regions/file.prj
+python3 PyPartitioner.py 27 axis_uniform x3-y3-z3 NEWFAC ./dev3x3x3/dev3x3x3.prj
+python3 PyPartitioner.py 3 axis_cuts x[0.2,0.5]-y[]-z[] NEWFAC ./box/file.prj
+python3 PyPartitioner.py 8 metis_recursive 1 PART ./regions/file.prj   # or legacy: 8 1 1 PART ...
 ```
 
 ## Key File Formats
@@ -146,12 +182,11 @@ python3 PyPartitioner.py 8 1 1 PART ../tests/my_mesh/mesh_regions/file.prj
 ### MSH 4.2 (Gmsh Output)
 - Entity-based format with separate node/element sections
 - Supported element types: Hex8 (type 5), Hex27 (type 92)
-- **New support added** via `pe_partpy/mesh/mesh_io.py` modifications
+- Read by `pe_partpy/mesh/mesh_io.py` (`readHexMeshFileMSH4`, `readNodesMSH4`, `readHexElementsMSH4`)
 
 ### VTK ASCII (Visualization)
-- UNSTRUCTURED_GRID format
-- Hexahedra as cell type 12
-- For ParaView visualization
+- UNSTRUCTURED_GRID format, hexahedra as cell type 12
+- For ParaView; also the intermediate format in the automated pipeline
 
 ### TRI (CFD Input)
 - Custom format with DCORVG (vertices) and KVERT (connectivity) sections
@@ -166,6 +201,7 @@ python3 PyPartitioner.py 8 1 1 PART ../tests/my_mesh/mesh_regions/file.prj
 <node_id_2>
 ...
 ```
+Wall regions can carry an analytic parametrization line instead of `''` (e.g. a sphere descriptor written by `parameterize_atc_sphere_caps.py`).
 
 ### PRJ (Project File)
 ```
@@ -180,168 +216,67 @@ region_1.par
 ### gmsh-learning
 - **Focus**: Parametric helical O-mesh generation
 - **Status**: Tested with Gmsh 4.12
-- **Key scripts**: `examples/pure_quad_omesh_helix_minimal.geo` (working baseline)
+- **Key scripts**: `examples/pure_quad_omesh_helix_minimal.geo` (working baseline, saves VTK directly)
 - **See**: `gmsh-learning/CLAUDE.md` for detailed Gmsh guidance
 
 ### pe_partpy
-- **Focus**: Mesh partitioning with METIS
-- **Methods**: Recursive (1), VKway (2), Kway (3), Axis-based (-3, -4, -6), Ring (6)
-- **Modifications**: Added MSH 4.x support, region-growing boundary detection
+- **Focus**: Mesh partitioning with METIS (named strategies, see table above)
+- **MSH 4.x support**: `mesh/mesh_io.py` provides `readHexMeshFileMSH4` (~line 655), `readNodesMSH4`, `readHexElementsMSH4`
+- **Boundary detection**: three generators (`gen_par_from_tri.py`, `gen_par_from_tri_by_normals.py`, `gen_par_from_tri_regions.py`)
 - **See**: `pe_partpy/CLAUDE.md` for detailed partitioning guidance
-
-## Modifications to External Repos
-
-This integration required modifications to `pe_partpy` (see `MODIFICATIONS.md`):
-
-### 1. New File: `gen_par_from_tri_regions.py`
-- Region-growing algorithm for boundary detection
-- Works on arbitrary geometries (curved surfaces, cylinders)
-- Configurable angular threshold (default: 45°)
-
-### 2. Modified: `mesh/mesh_io.py`
-- Added `readHexMeshFileMSH4()` - Main MSH 4.x reader
-- Added `readNodesMSH4()` - Entity-based node parsing
-- Added `readHexElementsMSH4()` - Hexahedral element extraction
-- **Location**: Insert before `readNodes()` function (~line 655)
-
-**Note**: `gmsh-learning` is used as-is without modifications.
 
 ## Development Workflow
 
 ### Adding New Geometries
 
 1. Create `.geo` file in `workflow/generators/`
-2. Test mesh generation: `gmsh mygeom.geo -3 -o test.msh`
-3. Verify MSH 4.x format compatibility
-4. Document in workflow README
+2. Test mesh generation: `gmsh mygeom.geo -3 -o test.msh` (or add a `Save "...vtk";` line to make it usable with `run_geo_to_case.py`)
+3. Verify format compatibility (MSH 4.2 or VTK)
+4. Document in `workflow/README.md`
 
 ### Testing New Conversions
 
-1. Generate test mesh in `tests/test_name/`
-2. Run converter: `python3 workflow/converters/msh_to_vtk.py tests/test_name/mesh.msh`
+1. Generate a test mesh
+2. Run the converter (`msh_to_vtk.py` for MSH input, `tri2vtk_converter.py` for VTK input)
 3. Verify VTK output in ParaView
-4. Test boundary detection with both methods (axis-aligned and region-growing)
-5. Verify `.prj` file completeness
+4. Test boundary detection (by-normals is the pipeline default; axis-aligned for boxes; region-growing as alternative)
+5. Verify `file.prj` completeness
 
 ### Debugging Partitioning
 
-1. Check mesh quality: `python3 pe_partpy/mesh/mesh.py` (if has quality functions)
-2. Verify `.tri` format correctness (1-based indexing, correct element count)
-3. Test with simple METIS method first (method 1)
-4. Check partition balance in terminal output
-
-## Common Tasks
-
-### "I want to mesh a box and partition it"
-```bash
-# 1. Generate
-gmsh workflow/generators/simple_box.geo -3 -o tests/box/mesh.msh
-
-# 2. Convert
-python3 workflow/converters/msh_to_vtk.py tests/box/mesh.msh
-
-# 3. Boundaries (axis-aligned is best for boxes)
-python3 pe_partpy/gen_par_from_tri.py tests/box/mesh.tri --outdir tests/box/regions
-
-# 4. Partition into 8 parts
-cd pe_partpy
-python3 PyPartitioner.py 8 1 1 BOX ../tests/box/regions/file.prj
-```
-
-### "I want to mesh a cylinder"
-```bash
-# 1. Generate
-gmsh workflow/generators/cylinder_structured.geo -3 -o tests/cyl/mesh.msh
-
-# 2. Convert
-python3 workflow/converters/msh_to_vtk.py tests/cyl/mesh.msh
-
-# 3. Boundaries (region-growing for curved surfaces)
-python3 pe_partpy/gen_par_from_tri_regions.py tests/cyl/mesh.tri --outdir tests/cyl/regions --angle 45.0
-
-# 4. Visualize
-python3 pe_partpy/tri2vtk_converter.py tests/cyl/regions/file.prj -proj tests/cyl/regions
-paraview tests/cyl/regions/main.vtu
-```
-
-### "I want to mesh a helical tube (ATC)"
-```bash
-# 1. Generate from gmsh-learning examples
-cd gmsh-learning/examples
-gmsh pure_quad_omesh_helix_minimal.geo -3 -o ../../tests/helix/mesh.msh
-
-# 2. Convert
-cd ../..
-python3 workflow/converters/msh_to_vtk.py tests/helix/mesh.msh
-
-# 3. Boundaries (region-growing for helical geometry)
-python3 pe_partpy/gen_par_from_tri_regions.py tests/helix/mesh.tri --outdir tests/helix/regions --angle 30.0
-```
+1. Verify `.tri` format correctness (1-based indexing, correct element count)
+2. Test with `metis_recursive` first
+3. Check partition balance in terminal output
+4. Inspect `_mesh/<name>/main.vtu` in ParaView (`run_partition_to_vtu.py` generates it)
 
 ## Dependencies
 
 - **Gmsh 4.x**: Mesh generation ([gmsh.info](http://gmsh.info))
-- **Python 3.x**: Scripting and automation
-- **NumPy**: Numerical operations
-- **METIS**: Graph partitioning library (libmetis.so in pe_partpy/partitioner/)
+- **Python 3.x** + **NumPy**
+- **METIS**: Graph partitioning (bundled as `pe_partpy/partitioner/libmetis.so`)
 - **ParaView** (optional): Visualization
-
-**Install Python dependencies:**
-```bash
-pip3 install numpy
-```
 
 **Verify setup:**
 ```bash
-./setup.sh
+./setup.sh              # clones/updates subrepos, checks environment
+workflow/check_env.sh   # checks gmsh, .venv, Python deps
 ```
 
 ## Git Structure
 
-This is a **parent repo** with two independent git subrepos:
-- Parent: `gmsh-learning2` (1 commit)
-- Subrepo: `gmsh-learning` (~12 commits, helical meshes)
-- Subrepo: `pe_partpy` (~24 commits, partitioning tools)
+This is a **parent repo** with two independent git subrepos (each has its own history; `setup.sh` clones them if missing):
+- Parent: `gmsh-learning2`
+- Subrepo: `gmsh-learning` (helical meshes)
+- Subrepo: `pe_partpy` (partitioning tools)
 
-Each subrepo has its own git history and can be updated independently. Use standard git commands within each directory.
-
-## Testing Status
-
-**Verified working:**
-- Simple box mesh (64 hex elements, 6 boundaries)
-- O-grid cylinder (384 hex elements, 7 boundaries)
-- Helical tube (48 hex elements with ultra-coarse settings)
-- MSH 4.x format conversion
-- Region-growing boundary detection
-- Axis-aligned boundary detection
-
-## Recent Development Activity
-
-**pe_partpy** (current directory):
-- Cube-to-case folder automation
-- Boundary identification by normals
-- VTK parsing improvements
-- Ring-based partitioning methods
-- Code modernization
-
-**gmsh-learning**:
-- O-mesh with boundary layers
-- Sphere fitting scripts
-- Gmsh wrapper scripts
-- Documentation improvements
-
-**Integration** (gmsh-learning2):
-- Unified workflow scripts
-- MSH 4.x converter
-- Cross-repo documentation
+Use standard git commands within each directory. Note: `gmsh-learning/` and `pe_partpy/` are untracked in the parent repo (nested repos, not submodules).
 
 ## When Working with This Repo
 
 1. **Respect subrepo boundaries**: Each subrepo has its own CLAUDE.md
-2. **Document modifications**: Update MODIFICATIONS.md if changing subrepo code
-3. **Test full pipeline**: After changes, verify end-to-end workflow
-4. **Use existing patterns**: Follow established file naming and directory structure
-5. **Check both README.md and CLAUDE.md**: README for users, CLAUDE.md for development
+2. **Test full pipeline**: After changes, verify end-to-end workflow (ideally via `run_geo_to_case.py` + `run_partition_to_vtu.py`)
+3. **Use existing patterns**: Follow established file naming and directory structure
+4. **Check both README.md and CLAUDE.md**: README for users, CLAUDE.md for development
 
 ## Key Contacts / References
 
@@ -351,7 +286,7 @@ Each subrepo has its own git history and can be updated independently. Use stand
 
 ## Version Information
 
-- **Created**: 2026-02-11
+- **Created**: 2026-02-11, **last verified against code**: 2026-07-03
 - **Gmsh Version**: 4.12.1 (tested)
 - **Python Version**: 3.x
 - **METIS**: Integrated via libmetis.so
@@ -362,4 +297,3 @@ For detailed component-specific guidance:
 - See `gmsh-learning/CLAUDE.md` for helical mesh generation
 - See `pe_partpy/CLAUDE.md` for mesh partitioning details
 - See `README.md` for user-facing workflow documentation
-- See `MODIFICATIONS.md` for subrepo change tracking

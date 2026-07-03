@@ -11,18 +11,17 @@ This workflow unifies mesh generation (gmsh-learning) and partitioning (pe_partp
 
 2. Generate a hex mesh:
 ```bash
-cd workflow/generators
-gmsh simple_box.geo -3 -o ../../tests/test_cylinder/mesh.msh
+gmsh workflow/generators/simple_box.geo -3 -o out/box/mesh.msh
 ```
 
 3. Convert to VTK and TRI formats:
 ```bash
-python3 workflow/converters/msh_to_vtk.py tests/test_cylinder/mesh.msh
+python3 workflow/converters/msh_to_vtk.py out/box/mesh.msh
 ```
 
 4. Inspect in ParaView:
 ```bash
-paraview tests/test_cylinder/mesh.vtk
+paraview out/box/mesh.vtk
 ```
 
 ## One-shot .geo → case folder
@@ -92,27 +91,33 @@ The resulting `sphere_regions.json` records:
 
 ```
 gmsh-learning2/
-├── setup.sh                  # Setup verification script
+├── setup.sh                  # Subrepo setup + environment checker
 ├── workflow/
+│   ├── README.md             # This file
+│   ├── check_env.sh          # Environment check (gmsh, venv, deps)
+│   ├── run_geo_to_case.py    # .geo → VTK → TRI → case folder pipeline
+│   ├── run_partition_to_vtu.py  # Partition a case + generate VTUs
+│   ├── parameterize_atc_sphere_caps.py  # ATC sphere-cap fitting
 │   ├── generators/           # Gmsh .geo scripts
-│   │   ├── simple_box.geo   # Working structured hex box
-│   │   └── cylinder_hex.geo # (WIP) Hex cylinder attempt
-│   ├── converters/           # Format conversion tools
-│   │   └── msh_to_vtk.py    # MSH 4.x → VTK + TRI
-│   └── README.md             # This file
-├── tests/
-│   └── test_cylinder/        # Test outputs
+│   │   ├── simple_box.geo           # Structured hex box
+│   │   ├── box_hex.geo              # Hex box variant
+│   │   ├── cylinder_structured.geo  # O-grid cylinder
+│   │   ├── cylinder_hex.geo         # Hex cylinder
+│   │   └── glowinski_column.geo     # Glowinski column geometry
+│   └── converters/           # Format conversion tools
+│       └── msh_to_vtk.py    # MSH 4.x → VTK + TRI
+├── _mesh/                    # Partitioning output (created at runtime)
 ├── gmsh-learning/            # Gmsh generation repo
 └── pe_partpy/                # Partitioning & mesh I/O repo
 ```
 
 ## Components
 
-### Mesh Generation (gmsh-learning)
+### Mesh Generation
 
 Create structured hexahedral meshes using Gmsh 4.x:
-- `simple_box.geo`: Reliable structured hex box mesh
-- Output: MSH 4.2 format (ASCII)
+- `workflow/generators/*.geo`: box, cylinder, and Glowinski column templates (MSH 4.2 ASCII output)
+- `gmsh-learning/examples/*.geo`: parametric helical O-meshes (save VTK directly, usable with `run_geo_to_case.py`)
 
 ### Format Conversion (msh_to_vtk.py)
 
@@ -129,8 +134,10 @@ Features:
 
 Use PyPartitioner.py for parallel CFD:
 ```bash
-python pe_partpy/PyPartitioner.py <NPart> <Method> <NSubPart> <Name> <Project.prj>
+python3 pe_partpy/PyPartitioner.py <NPart> <Strategy> <SubdivisionSpec> <Name> <Project.prj>
 ```
+
+Strategies are named (`metis_recursive`, `metis_vkway`, `metis_kway`, `axis_uniform`, `axis_cuts`, `plane_single`, `plane_dual`, `plane_ring`, plus `_reversed` METIS variants); legacy numeric codes (1, 2, 3, 11, 12, 13, -4, -5, -6, -7) are still accepted. The subdivision spec is a string such as `x3-y3-z3` or `x[0.2,0.5]-y[]-z[]`, or a plain integer for METIS sub-partitioning. Output goes to `_mesh/`.
 
 ### ParaView VTU From A Case Folder
 
@@ -235,16 +242,26 @@ Custom CFD solver format:
 - Python 3.x
 - numpy
 
+## Boundary Parametrization (.par files)
+
+Three generators in `pe_partpy/`, all writing `region_*.par` + `file.prj` + a `.tri` copy into `--outdir`:
+
+```bash
+# Axis-aligned (boxes)
+python3 pe_partpy/gen_par_from_tri.py mesh.tri [--outdir OUT] [--tol 1e-6]
+
+# Normal clustering (general geometries; default in run_geo_to_case.py)
+python3 pe_partpy/gen_par_from_tri_by_normals.py mesh.tri [--outdir OUT] [--delta 30.0] [--min-faces N]
+
+# Region-growing (curved surfaces)
+python3 pe_partpy/gen_par_from_tri_regions.py mesh.tri [--outdir OUT] [--angle 45.0]
+```
+
 ## Testing
 
-The test case `simple_box` demonstrates the complete workflow:
-- Input: 2×1×1 box with 64 hexahedra (4×4×4 divisions)
-- Output: 125 nodes, 64 hex elements
-- Verified to load correctly in ParaView
-
-## Next Steps
-
-- Create cylindrical hex mesh generator (cylinder_hex.geo needs fixing)
-- Add boundary condition (.par) file generation
-- Integrate with PyPartitioner for domain decomposition
-- Add helical mesh support from gmsh-learning
+Quick end-to-end smoke test:
+```bash
+.venv/bin/python workflow/run_geo_to_case.py gmsh-learning/examples/pure_quad_omesh_helix_minimal.geo --outdir out/helix_case
+python3 workflow/run_partition_to_vtu.py out/helix_case/file.prj 4 metis_recursive 1
+paraview _mesh/*/main.vtu
+```
