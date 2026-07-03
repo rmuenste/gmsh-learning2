@@ -63,6 +63,39 @@ Parameterized ATC run with fitted spherical cap metadata for CFD:
 This updates the second line of the two endpoint `region_####.par` files to `-3 <region_id>`
 and writes `sphere_regions.json` with the fitted sphere centers, residual metrics, and fit settings.
 
+### Periodic pipe mesh (`pipe_ogrid_z.geo`)
+
+`workflow/generators/pipe_ogrid_z.geo` builds a z-axis pipe (R = 0.5, centered on (0,0))
+with a true 5-block butterfly O-grid cross-section (48 cells/section, 8 across the diameter)
+and a pure translational extrusion, so the z=0 and z=L end faces are exact translated copies.
+ONELAB parameters: `L` (default 2.0) and `nLayers` (default 27; keep divisible by 27 for the
+1×1×27 slab decomposition).
+
+```bash
+# primary mesh: L=2.0, 27 layers -> 1296 hexes, 1596 nodes
+.venv/bin/python workflow/run_geo_to_case.py workflow/generators/pipe_ogrid_z.geo \
+  --outdir cases/pipe_ogrid_z --tag-pipe-boundaries
+
+# L=4.0 (8R) / 54-layer variant
+.venv/bin/python workflow/run_geo_to_case.py workflow/generators/pipe_ogrid_z.geo \
+  --setnumber L=4.0 --setnumber nLayers=54 \
+  --outdir cases/pipe_ogrid_z_L4 --tag-pipe-boundaries
+
+# partition smoke test: 27 clean z-slabs of 48 hexes each
+.venv/bin/python workflow/run_partition_to_vtu.py cases/pipe_ogrid_z/file.prj 27 axis_uniform x1-y1-z27
+```
+
+`--tag-pipe-boundaries` runs `workflow/tag_pipe_boundaries.py` after boundary detection. It
+classifies the three regions from node coordinates, verifies the end faces are congruent under
+the (0,0,L) translation, then rewrites and renames the `.par` files:
+
+- `hull.par`: `Wall` with the analytic cylinder descriptor `7 0d0 0d0 0d0 0.5d0 1d0 1d0 0d0`
+  (type-7 parametrization: project x,y; z free)
+- `zmin.par` / `zmax.par`: `Periodic` (non-BC tag; the CFD couples them by coordinate
+  matching with `dPeriodicity(3) = L`), parameter `''`
+
+The script is also runnable standalone: `tag_pipe_boundaries.py --case-dir cases/pipe_ogrid_z`.
+
 ### ATC sphere-fit behavior
 
 The ATC workflow fits a fixed-radius sphere to the ring of nodes on each open helix end.
@@ -103,7 +136,9 @@ gmsh-learning2/
 │   │   ├── box_hex.geo              # Hex box variant
 │   │   ├── cylinder_structured.geo  # O-grid cylinder
 │   │   ├── cylinder_hex.geo         # Hex cylinder
-│   │   └── glowinski_column.geo     # Glowinski column geometry
+│   │   ├── glowinski_column.geo     # Glowinski column geometry
+│   │   └── pipe_ogrid_z.geo         # Periodic z-axis pipe (butterfly O-grid, saves VTK)
+│   ├── tag_pipe_boundaries.py # Pipe boundary tagging (Wall hull + Periodic caps)
 │   └── converters/           # Format conversion tools
 │       └── msh_to_vtk.py    # MSH 4.x → VTK + TRI
 ├── _mesh/                    # Partitioning output (created at runtime)

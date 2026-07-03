@@ -106,6 +106,11 @@ def main() -> int:
         help="Pass Gmsh ONELAB overrides as name=value; may be specified multiple times",
     )
     parser.add_argument(
+        "--tag-pipe-boundaries",
+        action="store_true",
+        help="Tag pipe case boundaries: Wall hull with analytic cylinder descriptor, Periodic end caps",
+    )
+    parser.add_argument(
         "--fit-atc-spheres",
         action="store_true",
         help="Fit fixed-radius spheres to the two open ATC helix ends and annotate matching .par files",
@@ -235,9 +240,22 @@ def main() -> int:
             ]
         )
 
-    # 5) case folder -> VTU for visualization
     if case_dir is None:
         case_dir = tri_path.with_suffix("")
+
+    if args.tag_pipe_boundaries:
+        run(
+            [
+                sys.executable,
+                "workflow/tag_pipe_boundaries.py",
+                "--case-dir",
+                str(case_dir),
+                "--tri",
+                str(tri_path),
+            ]
+        )
+
+    # 5) case folder -> VTU for visualization
     prj_path = case_dir / "file.prj"
     if not prj_path.exists():
         print(f"Error: expected project file not found: {prj_path}", file=sys.stderr)

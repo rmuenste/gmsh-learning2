@@ -18,6 +18,12 @@ tests/**/*.png
 *.msh~
 *.geo~
 workflow/generators/*.msh
+workflow/generators/*.vtk
+workflow/generators/*.tri
+
+# Generated case folders and partitioning output
+cases/
+_mesh/
 
 # IDE
 .vscode/
