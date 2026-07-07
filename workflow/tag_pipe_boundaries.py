@@ -28,7 +28,9 @@ if str(REPO_ROOT) not in sys.path:
 
 from pe_partpy.mesh.mesh_io import readTriFile
 
-DEFAULT_HULL_PARAM = "7 0d0 0d0 0d0 0.5d0 1d0 1d0 0d0"
+# Quoted: the CFD reads this line with a Fortran list-directed READ,
+# which would stop at the first blank if the string were unquoted.
+DEFAULT_HULL_PARAM = "'7 0d0 0d0 0d0 0.5d0 1d0 1d0 0d0'"
 
 
 def _read_par(path: Path) -> tuple[str, str, list[int]]:

@@ -96,6 +96,29 @@ the (0,0,L) translation, then rewrites and renames the `.par` files:
 
 The script is also runnable standalone: `tag_pipe_boundaries.py --case-dir cases/pipe_ogrid_z`.
 
+### Closed-box mesh with analytic wall planes (ten Cate case)
+
+For axis-aligned box cases (e.g. the ten Cate settling-sphere container, 100×100×160 mm),
+the box pipeline runs through `pe_partpy` directly — no Gmsh involved:
+
+```bash
+# 6x6x9 coarse hexes over [0,0.1]x[0,0.1]x[0,0.16] m (h0 ~ 16.7 mm, 324 elements)
+.venv/bin/python pe_partpy/unit_cube_vtk.py --out cases/ten_cate_box/box.vtk \
+  --nx 6 --ny 6 --nz 9 --x0 0 --x1 0.1 --y0 0 --y1 0.1 --z0 0 --z1 0.16
+.venv/bin/python pe_partpy/tri2vtk_converter.py cases/ten_cate_box/box.vtk cases/ten_cate_box/box.tri
+.venv/bin/python pe_partpy/gen_par_from_tri.py cases/ten_cate_box/box.tri --outdir cases/ten_cate_box/regions
+.venv/bin/python workflow/tag_box_boundaries.py --case-dir cases/ten_cate_box/regions
+
+# 3x3x3 = 27 subdomains, each exactly 2x2x3 coarse elements
+.venv/bin/python workflow/run_partition_to_vtu.py cases/ten_cate_box/regions/file.prj 27 axis_uniform x3-y3-z3 --mesh-name ten_cate_box
+```
+
+`tag_box_boundaries.py` rewrites the six face `.par` files with quoted type-4 plane
+descriptors (`'4 dA dB dC dD'` for the plane `dA*x + dB*y + dC*z + dD = 0`), btype `Wall`
+all around (closed container; `NoOutflow` handles the enclosed pressure). Descriptor lines
+in `.par` files must stay quoted — the CFD reads them with a Fortran list-directed READ,
+which stops at the first blank in an unquoted string.
+
 ### ATC sphere-fit behavior
 
 The ATC workflow fits a fixed-radius sphere to the ring of nodes on each open helix end.
@@ -139,6 +162,7 @@ gmsh-learning2/
 │   │   ├── glowinski_column.geo     # Glowinski column geometry
 │   │   └── pipe_ogrid_z.geo         # Periodic z-axis pipe (butterfly O-grid, saves VTK)
 │   ├── tag_pipe_boundaries.py # Pipe boundary tagging (Wall hull + Periodic caps)
+│   ├── tag_box_boundaries.py  # Box boundary tagging (quoted type-4 wall planes)
 │   └── converters/           # Format conversion tools
 │       └── msh_to_vtk.py    # MSH 4.x → VTK + TRI
 ├── _mesh/                    # Partitioning output (created at runtime)
